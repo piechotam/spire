@@ -1,0 +1,9 @@
+einops==0.8.1
+jaxtyping==0.3.2
+numpy==2.2.5
+Pillow==11.2.1
+pydantic==2.11.4
+strenum==0.4.15
+torch==2.5.0
+torchvision==0.20.0
+tqdm==4.66.2
