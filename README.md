@@ -1,1 +1,1 @@
-# Sparse Representations for Information Retrieval Enhancement
+# Sparse Representations for Information Retrieval Enhancement (SpIRE)
