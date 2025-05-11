@@ -2,9 +2,10 @@ import csv
 import torch
 import torchvision
 import numpy as np
+import matplotlib.pyplot as plt
 from typing import Union
 from PIL import Image
-
+from sklearn.metrics.pairwise import cosine_similarity
 from sparse_autoencoder.autoencoder.model import SparseAutoencoder
 
 _SAE_N_INPUT_FEATURES = 512
@@ -175,3 +176,100 @@ def extract_concepts(
     top_n_concept_names = [concept_names[i] for i in largest_indices_sorted]
 
     return top_n_concept_activations, top_n_concept_names
+
+
+def extract_embedding(
+    image_transformed: torch.Tensor,
+    clip_model: torch.nn.Module,
+):
+    return clip_model.encode_image(image_transformed)
+
+
+
+def find_neighbours(query_embedding, embeddings, query_image_idx, top_n=5):
+    if len(query_embedding.shape) > 2:
+        query_embedding = query_embedding.reshape(1, -1)
+    
+    if len(embeddings.shape) > 2:
+        original_shape = embeddings.shape
+        n_samples = original_shape[0]
+        embeddings = embeddings.reshape(n_samples, -1)
+    
+    cos_sim = cosine_similarity(query_embedding, embeddings)
+    cos_sim = cos_sim[0] 
+    
+    sorted_idx = np.argsort(cos_sim)[::-1]
+    
+    sorted_idx = sorted_idx[sorted_idx != query_image_idx]
+    
+    nearest_idx = sorted_idx[:top_n]
+    farthest_idx = sorted_idx[-top_n:]
+    
+    nearest_similarities = np.array([cos_sim[idx] for idx in nearest_idx])
+    farthest_similarities = np.array([cos_sim[idx] for idx in farthest_idx])
+    
+    return nearest_idx, nearest_similarities, farthest_idx, farthest_similarities
+
+
+def visualize_neighbours_with_distances(
+    samples,
+    query_idx,
+    nearest_indices,
+    nearest_similarities,
+    farthest_indices=None,
+    farthest_similarities=None,
+    title="Image Similiarity Comparison (CLIP)",
+):
+
+    show_farthest = farthest_indices is not None and farthest_similarities is not None
+
+    n_nearest = len(nearest_indices)
+    n_farthest = len(farthest_indices) if show_farthest else 0
+
+    if show_farthest:
+        n_cols = max(n_nearest, n_farthest) + 1
+        n_rows = 2
+    else:
+        n_cols = n_nearest + 1
+        n_rows = 1
+
+    _, axs = plt.subplots(n_rows, n_cols, figsize=(n_cols * 3, n_rows * 3))
+
+    if n_rows == 1:
+        axs = axs.reshape(1, -1)
+
+    axs[0, 0].imshow(samples[query_idx]["image"])
+    axs[0, 0].axis("off")
+    axs[0, 0].set_title("Query Image")
+
+    for i, (neighbour_idx, similarity) in enumerate(
+        zip(nearest_indices, nearest_similarities)
+    ):
+        axs[0, i + 1].imshow(samples[neighbour_idx]["image"])
+        axs[0, i + 1].axis("off")
+        axs[0, i + 1].set_title(f"Nearest {i+1}\nSimilarity: {similarity:.4f}")
+
+    for i in range(n_nearest + 1, n_cols):
+        axs[0, i].axis("off")
+        axs[0, i].set_visible(False)
+
+    if show_farthest:
+        axs[1, 0].imshow(samples[query_idx]["image"])
+        axs[1, 0].axis("off")
+        axs[1, 0].set_title("Query Image")
+
+        for i, (far_idx, similarity) in enumerate(
+            zip(farthest_indices, farthest_similarities)
+        ):
+            axs[1, i + 1].imshow(samples[far_idx]["image"])
+            axs[1, i + 1].axis("off")
+            axs[1, i + 1].set_title(f"Farthest {i+1}\nSimilarity: {similarity:.4f}")
+
+        for i in range(n_farthest + 1, n_cols):
+            axs[1, i].axis("off")
+            axs[1, i].set_visible(False)
+
+    plt.suptitle(title, fontsize=16)
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.8)
+    plt.show()
