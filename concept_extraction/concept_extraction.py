@@ -211,6 +211,39 @@ def find_neighbours(query_embedding, embeddings, query_image_idx, top_n=5):
     return nearest_idx, nearest_similarities, farthest_idx, farthest_similarities
 
 
+def extract_sae_activations(embedding, sparse_autoencoder):
+    with torch.no_grad():
+        activations = sparse_autoencoder.encoder(embedding)
+    return activations
+
+def find_neighbours_sae(query_activations, all_activations, query_idx, top_n=5):
+    if len(query_activations.shape) > 2:
+        query_activations = query_activations.reshape(1, -1)
+    if len(all_activations.shape) > 2:
+        original_shape = all_activations.shape
+        n_samples = original_shape[0]
+        all_activations = all_activations.reshape(n_samples, -1)
+    
+    
+    distances = np.abs(all_activations - query_activations).sum(axis=1)
+    n_samples = len(distances)
+    if query_idx >= n_samples:
+        print(f"Warning: query_idx ({query_idx}) is outside valid range (0-{n_samples-1})")
+    else:
+        distances[query_idx] = -1
+    
+        top_n = min(top_n, n_samples - 1)
+        
+        sorted_idx = np.argsort(distances)
+        sorted_idx = sorted_idx[sorted_idx != query_idx]
+        nearest_idx = sorted_idx[:top_n]
+        farthest_idx = sorted_idx[-top_n:]
+        
+        nearest_similarities = np.array([distances[idx] for idx in nearest_idx])
+        farthest_similarities = np.array([distances[idx] for idx in farthest_idx])
+    
+    return nearest_idx, nearest_similarities, farthest_idx, farthest_similarities
+
 def visualize_neighbours_with_distances(
     samples,
     query_idx,
