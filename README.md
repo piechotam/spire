@@ -18,6 +18,6 @@ When using **CLIP (Contrastive Language–Image Pretraining)**  feature extracto
 #
 *Description based on the paper "Discover-then-Name: Task-Agnostic Concept Bottlenecks via Automated Concept Discovery".*
 
-## How similiarity was measured?
+## How similarity was measured?
 - CLIP $\rightarrow$ cosine similarity
 - SAE $\rightarrow$ Manhattan distance
