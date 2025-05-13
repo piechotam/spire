@@ -17,3 +17,7 @@ To assign human-readable names to these concepts, each vector from $W_D$ can be 
 When using **CLIP (Contrastive Language–Image Pretraining)**  feature extractors, the dictionary vectors from the SAE decoder can be directly mapped to text by finding the most similar text embeddings in CLIP space—without the need for large language models—resulting in semantically meaningful and human-interpretable concepts.
 #
 *Description based on the paper "Discover-then-Name: Task-Agnostic Concept Bottlenecks via Automated Concept Discovery".*
+
+## How similiarity was measured?
+- CLIP $\rightarrow$ cosine similarity
+- SAE $\rightarrow$ Manhattan distance
