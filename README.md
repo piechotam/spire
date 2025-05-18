@@ -21,3 +21,26 @@ When using **CLIP (Contrastive Language–Image Pretraining)**  feature extracto
 ## How similarity was measured?
 - CLIP $\rightarrow$ cosine similarity
 - SAE $\rightarrow$ Manhattan distance
+
+## Defined metrics
+
+### Precision@k
+- **Description**: Precision for the top-k retrieved item.
+- **Calculation**: Measures whether first k results are relevant (i.e., belongs to the set of relevant items for the query).
+
+### Recall@k
+- **Description**: Recall for the top-k retrieved item.
+- **Calculation**: Measures whether first k results are relevant in the context of all relevant items for the query.
+
+### mAP (Mean Average Precision)
+- **Description**: The mean of the Average Precision (AP) across all queries.
+- **Calculation**: Average Precision for a query is the average of the precision calculated for each relevant result in the ranking. mAP is the mean of these Average Precisions across all queries.
+
+### MicroAP (Micro-Average Precision)
+- **Description**: A metric that evaluates all query-reference pairs jointly.
+- **Calculation**: Sorts all pairs by confidence (similarity score) and computes the area under the precision-recall curve for the entire set of pairs.
+
+**Note:** `microAP` is better when evaluating global ranking performance, while `mAP` treats each query independently.
+
+#### References
+[1] Douze, M., Tolias, G., Pizzi, E., Papakipos, Z., Chanussot, L., Radenovic, F., Jenicek, T., Maximov, M., Leal-Taixé, L., Elezi, I., Chum, O., & Canton Ferrer, C. "The 2021 Image Similarity Dataset and Challenge." arXiv preprint arXiv:2106.09672 (2021). https://arxiv.org/pdf/2106.09672
