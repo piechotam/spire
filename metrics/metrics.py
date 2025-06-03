@@ -1,7 +1,7 @@
 import h5py
+import pickle
 import numpy as np
-from typing import Dict, List, Set, Optional, Literal
-from collections import namedtuple
+from typing import Dict, List, Set, Literal
 from sklearn.metrics.pairwise import cosine_similarity
 from math import ceil
 
@@ -29,7 +29,7 @@ def create_ground_truth_dict(path_to_gt_file: str) -> Dict[int, int]:
 def compute_similarity(
         query_embeddings: np.array, 
         reference_embeddings: np.array, 
-        metric: str
+        metric: Literal['cosine', 'manhattan']
 ) -> np.array:
     '''
     Compute the similarity between query and reference embeddings.
@@ -125,6 +125,7 @@ def _process_single_reference(
         reference_embeddings_path: str,
         model: str,
         model_embeddings_filename: str,
+        ground_truth: Dict[int, int],
         indices_filename: str,
         query_embeddings_fileref: h5py.Dataset,
         query_indices_fileref: h5py.Dataset,
@@ -133,7 +134,6 @@ def _process_single_reference(
     '''
     Processes single reference set by finding nearest neighbor embeddings from that set.
     '''
-    RefMatch = namedtuple('RefMatch', 'reference_idx, similarity')
     metric = 'cosine' if model == 'clip' else 'manhattan'
     query_embeddings_position = 0
     n_queries = len(query_embeddings_fileref)
@@ -152,12 +152,17 @@ def _process_single_reference(
             for i, query_index in enumerate(query_indices_fileref[query_embeddings_position:(query_embeddings_position + 1) * batch_size]):
                 ref_match_idx = nearest_neighbors_reference_indices[i]
                 similarity = similarities[i, nearest_neighbors_array_indices[i]]
+                correct_match = ground_truth.get(query_indices_fileref) == ref_match_idx
                 current_query_ref_match = matched_pairs.get(query_index)
-                new_query_ref_match = RefMatch(ref_match_idx, similarity)
+                new_query_ref_match = {
+                    "ref_match_idx": ref_match_idx,
+                    "similarity": similarity,
+                    "correct_match": correct_match
+                }
 
                 if current_query_ref_match is None:
                     matched_pairs[query_index] = new_query_ref_match
-                elif current_query_ref_match.similarity < similarity:
+                elif current_query_ref_match["similarity"] < similarity:
                     matched_pairs[query_index] = new_query_ref_match
 
             query_embeddings_position += batch_size
@@ -166,9 +171,33 @@ def create_matched_pairs(
         query_embeddings_path: str,
         reference_embeddings_paths: List[str],
         model: Literal['clip', 'sae'],
-        batch_size: int):
+        ground_truth: Dict[int, int],
+        batch_size: int,
+        save_path: str | None = None):
     '''
     Finds nearest neighbor referenece embedding for each query embedding.
+
+    Parameters
+    ----------
+    query_embeddings_path: str
+        Path to directory with query embeddings.
+    
+    reference_embeddings_paths: List[str]
+        List of paths to directories with reference embeddings.
+    
+    model: Literal['clip', 'sae']
+        Which model embeddings to use.
+    
+    batch_size: int
+        Batch size of queries for similarity calculation.
+
+    save_path: str | None = None 
+        Path to where the matched_pairs will be saved. If None the output will not be saved.
+    
+    Returns
+    -------
+    matched_pairs: Dict
+        Dictonary with query indices as keys and tuples with nearest neighbor reference index and similarity as values.
     '''
     matched_pairs = dict()
     model_embeddings_filename = model + '.h5'
@@ -186,38 +215,71 @@ def create_matched_pairs(
                 reference_embeddings_path=reference_embeddings_path,
                 model=model,
                 model_embeddings_filename=model_embeddings_filename,
+                ground_truth=ground_truth,
                 indices_filename=indices_filename,
                 query_embeddings_fileref=query_embeddings_fileref,
                 query_indices_fileref=query_indices_fileref,
                 batch_size=batch_size
             )
+    
+    if save_path is not None:
+        print(f"Saving matched_pairs to {save_path}/matched_pairs.pkl...")
+        with open(f"{save_path}/matched_pairs.pkl", 'wb') as f:
+            pickle.dump(matched_pairs, f)
 
     return matched_pairs
 
 def micro_average_precision(
-        matched_pairs: List[Dict],
-        number_of_positives: int
+        matched_pairs: Dict,
+        number_of_positives: int,
+        save_path: str | None = None
 ):
     '''
     Calculates the microAP. Saves precision and recall for different thresholds.
+
+    Parameters
+    ----------
+    matched_pairs: Dict
+        Dictonary with query indices as keys and tuples with nearest neighbor reference index and similarity as values.
+    
+    number_of_positives: int
+        Number of positive samples.
+    
+    save_path: str | None = None 
+        Path to where the output will be saved. If None the output will not be saved.
+    
+    Returns
+    -------
+    micro_ap: float
+        The microAP value.
+    
+    precision_recall_history: np.ndarray
+        A numpy array with precision-recall pairs for different threshold values.
     '''
-    matched_pairs.sort(key=lambda x: x['similarity'], reverse=True)
+    matched_pairs = sorted(matched_pairs.items(), key=lambda item: item[1]["similarity"], reverse=True)
     micro_ap = 0.0
     num_relevant_found = 0
     prev_recall = 0.0
     precision_recall_history = np.empty(shape=(len(matched_pairs), 3))
 
-    for i, pair in enumerate(matched_pairs):
-        if pair['is_relevant']:
+    for i, (query_idx, ref_match) in enumerate(matched_pairs):
+        if ref_match["correct_match"]:
             num_relevant_found += 1
         precision = num_relevant_found / (i + 1)
         recall = num_relevant_found / number_of_positives
         delta_recall = recall - prev_recall
         micro_ap += precision * delta_recall
         prev_recall = recall
-        threshold = pair['similarity']
+        threshold = ref_match["similarity"]
         precision_recall_history[i] = [precision, recall, threshold]
     
+    if save_path is not None:
+        print(f'Saving precision-recall history to {save_path}/precision_recall_history.npy...')
+        np.save(f'{save_path}/precision_recall_history.npy', precision_recall_history)
+        print(f'Saving microAP value to {save_path}/microAP.txt...')
+        with open(f'{save_path}/microAP.txt', 'w') as f:
+            f.write(str(micro_ap))
+
     return micro_ap, precision_recall_history
 
 def average_precision(
