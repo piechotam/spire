@@ -1,8 +1,9 @@
 import h5py
 import pickle
 import numpy as np
-from typing import Dict, List, Set, Literal
-from sklearn.metrics.pairwise import cosine_similarity
+import faiss
+from typing import Dict, List, Set, Tuple, Literal
+from sklearn.metrics.pairwise import cosine_similarity, manhattan_distances
 from math import ceil
 
 def create_ground_truth_dict(path_to_gt_file: str) -> Dict[int, int]:
@@ -56,72 +57,89 @@ def compute_similarity(
     if metric == 'cosine':
         return cosine_similarity(query_embeddings, reference_embeddings)
     elif metric == 'manhattan':
-        diff = np.abs(query_embeddings[:, np.newaxis, :] - reference_embeddings)
-        distances = np.sum(diff, axis=2)
+        distances = manhattan_distances(query_embeddings, reference_embeddings)
         return -distances
     else:
         raise ValueError("Unsupported metric. Use 'cosine' or 'manhattan'.")
 
 
-def precision_at_k(
-        sorted_indices: np.ndarray, 
-        relevant_items: Set[int],
-        k: int
+def precision_top_k(
+        nearest_neighbors: Dict[int, List[Tuple[float, int, bool]]], 
+        k: int,
+        threshold: float
 ) -> float:
     '''
-    Compute precision at K.
+    Compute top_k precision.
     
     Parameters
     ----------
-    sorted_indices : np.ndarray
-        Indices of reference items sorted by similarity (descending).
-    relevant_items : Set[int]
-        Set of indices of truly relevant items.
+    nearest_neighbors: Dict[int, List[Tuple[float, int, bool]]]
+        Dictonary with query indices as keys and lists with k_nearest neighbors reference index and similarity as values.
     k : int
-        Number of top items to consider.
-    
+        Number of nearest neighbors to consider.
+    threshold: float
+        Classification threshold.
+        
     Returns
     -------
     float
-        Precision@K score.
+        Top_k precision.
     '''
-    top_k = sorted_indices[:k]
-    if len(top_k) == 0:
-        return 0.0
-    TP = len(set(top_k) & relevant_items)
-    return TP / len(top_k)
+    predicted_positive = true_positive = 0
+    for query_idx, nn_list in nearest_neighbors.items():
+        if len(nn_list) < k:
+            raise ValueError(f"Only {len(nn_list)} nearest neighbors provided. Got k = {k}.")
+        top_k_nn = nn_list[:k]
+        for nearest_neighbor in top_k_nn:
+            nn_similarity = nearest_neighbor[0]
+            correct_match = nearest_neighbor[2]
+            if nn_similarity > threshold:
+                predicted_positive += 1
+                if correct_match:
+                    true_positive += 1
 
-def recall_at_k(
-        sorted_indices: np.ndarray, 
-        relevant_items: Set[int], 
-        k: int
+    return true_positive / predicted_positive if predicted_positive > 0 else 0.0
+
+def recall_top_k(
+        nearest_neighbors: Dict[int, List[Tuple[float, int, bool]]],
+        k: int,
+        threshold: float,
+        n_positives: int
 ) -> float:
     '''
-    Compute recall at K.
+    Compute top_k recall.
     
     Parameters
     ----------
-    sorted_indices : np.ndarray
-        Indices of reference items sorted by similarity (descending).
-    relevant_items : Set[int]
-        Set of indices of truly relevant items.
+    nearest_neighbors: Dict[int, List[Tuple[float, int, bool]]]
+        Dictonary with query indices as keys and lists with k_nearest neighbors reference index and similarity as values.
     k : int
-        Number of top items to consider.
+        Number of nearest neighbors to consider.
+    threshold: float
+        Classification threshold.
+    n_positives: int
+        Number of positives. 
     
     Returns
     -------
     float
-        Recall@K score.
+        Top_k recall.
     '''
-    top_k = sorted_indices[:k]
-    if len(relevant_items) == 0:
-        return 0.0
-    TP = len(set(top_k) & relevant_items)
-    FN = len(relevant_items - set(top_k))
-    return TP / (TP + FN)
+    true_positive = 0
+    for query_idx, nn_list in nearest_neighbors.items():
+        if len(nn_list) < k:
+            raise ValueError(f"Only {len(nn_list)} nearest neighbors provided. Got k = {k}.")
+        top_k_nn = nn_list[:k]
+        for nearest_neighbor in top_k_nn:
+            nn_similarity = nearest_neighbor[0]
+            correct_match = nearest_neighbor[2]
+            if nn_similarity > threshold and correct_match:
+                    true_positive += 1
+
+    return true_positive / n_positives if n_positives > 0 else 0.0
 
 def _process_single_reference(
-        matched_pairs: dict,
+        nearest_neighbors: Dict[int, List[Tuple[float, int, bool]]],
         reference_embeddings_path: str,
         model: str,
         model_embeddings_filename: str,
@@ -129,49 +147,72 @@ def _process_single_reference(
         indices_filename: str,
         query_embeddings_fileref: h5py.Dataset,
         query_indices_fileref: h5py.Dataset,
+        n_queries: int,
+        k_nearest: int,
         batch_size: int
 ):
     '''
-    Processes single reference set by finding nearest neighbor embeddings from that set.
+    Processes single reference set by finding k_nearest neighbors embeddings from that set.
     '''
     metric = 'cosine' if model == 'clip' else 'manhattan'
     query_embeddings_position = 0
-    n_queries = len(query_embeddings_fileref)
+    n_queries = min(n_queries, len(query_embeddings_fileref))
     n_batches = ceil(n_queries / batch_size)
 
     with h5py.File(f"{reference_embeddings_path}/{model_embeddings_filename}") as reference_embeddings_file, \
          h5py.File(f"{reference_embeddings_path}/{indices_filename}") as reference_indices_file:
-        reference_embeddings = reference_embeddings_file[f"{model}_embeddings"][:] # at most 6GB loaded to RAM in our case, speeds up calculation
-        reference_indices = reference_indices_file["image_indices"]
-        for query_batch_number in range(n_batches):
-            query_embeddings_batch = query_embeddings_fileref[query_embeddings_position:(query_embeddings_position + 1) * batch_size]
-            similarities = compute_similarity(query_embeddings_batch, reference_embeddings, metric)
-            nearest_neighbors_array_indices = np.argmax(similarities, axis=1)
-            nearest_neighbors_reference_indices = reference_indices[nearest_neighbors_array_indices]
+        reference_embeddings = reference_embeddings_file[f"{model}_embeddings"][:]
+        reference_indices = reference_indices_file["image_indices"][:]
+        k_nearest = min(k_nearest, reference_embeddings.shape[0])
+        
+        if model == "sae":
+            faiss_index = faiss.IndexFlat(reference_embeddings.shape[1], faiss.METRIC_L1)
+            try:
+                faiss_index.add(reference_embeddings)
+                print(f"Faiss L1 index built successfully. Index total: {faiss_index.ntotal}")
+            except Exception as e:
+                print(f"Error building Faiss L1 index: {e}")
+                faiss_index = None
+
+        for batch_number in range(n_batches):
+            start_idx = query_embeddings_position
+            end_idx = min(query_embeddings_position + batch_size, n_queries)
+            if start_idx >= end_idx: break
+            query_embeddings_batch = query_embeddings_fileref[start_idx:end_idx]
             
-            for i, query_index in enumerate(query_indices_fileref[query_embeddings_position:(query_embeddings_position + 1) * batch_size]):
-                ref_match_idx = nearest_neighbors_reference_indices[i]
-                similarity = similarities[i, nearest_neighbors_array_indices[i]]
-                correct_match = ground_truth.get(query_indices_fileref) == ref_match_idx
-                current_query_ref_match = matched_pairs.get(query_index)
-                new_query_ref_match = {
-                    "ref_match_idx": ref_match_idx,
-                    "similarity": similarity,
-                    "correct_match": correct_match
-                }
-
-                if current_query_ref_match is None:
-                    matched_pairs[query_index] = new_query_ref_match
-                elif current_query_ref_match["similarity"] < similarity:
-                    matched_pairs[query_index] = new_query_ref_match
-
+            if model == "sae" and faiss_index is not None:
+                query_embeddings_batch_faiss = np.ascontiguousarray(query_embeddings_batch.astype('float32'))
+                distances, nearest_neighbors_array_indices_k_nearest = faiss_index.search(query_embeddings_batch_faiss, k_nearest)
+                similarities = -distances
+            else:
+                similarities = compute_similarity(query_embeddings_batch, reference_embeddings, metric)
+                nearest_neighbors_array_indices_k_nearest = np.argpartition(similarities, -k_nearest, axis=1)[:, -k_nearest:]
+            
+            for i, query_index in enumerate(query_indices_fileref[start_idx:end_idx]):
+                query_k_nearest_array_indices = nearest_neighbors_array_indices_k_nearest[i]
+                query_k_nearest_reference_indices = reference_indices[query_k_nearest_array_indices]
+                
+                if model == "clip":
+                    query_k_similarities = similarities[i, query_k_nearest_array_indices]
+                else:
+                    query_k_similarities = similarities[i]
+                
+                query_ground_truth = ground_truth.get(query_index)
+                found_k_nearest = [(sim, ref_idx, ref_idx == query_ground_truth) for sim, ref_idx in zip(query_k_similarities, query_k_nearest_reference_indices)]
+                current_k_nearest = nearest_neighbors.get(query_index, [])
+                current_k_nearest.extend(found_k_nearest)
+                current_k_nearest.sort(key=lambda t: t[0], reverse=True)
+                nearest_neighbors[query_index] = current_k_nearest[:k_nearest]
+                
             query_embeddings_position += batch_size
 
-def create_matched_pairs(
+def find_nearest_neighbors(
         query_embeddings_path: str,
         reference_embeddings_paths: List[str],
         model: Literal['clip', 'sae'],
         ground_truth: Dict[int, int],
+        n_queries: int,
+        k_nearest: int,
         batch_size: int,
         save_path: str | None = None):
     '''
@@ -192,14 +233,14 @@ def create_matched_pairs(
         Batch size of queries for similarity calculation.
 
     save_path: str | None = None 
-        Path to where the matched_pairs will be saved. If None the output will not be saved.
+        Path to where the nearest_neighbors will be saved. If None the output will not be saved.
     
     Returns
     -------
-    matched_pairs: Dict
-        Dictonary with query indices as keys and tuples with nearest neighbor reference index and similarity as values.
+    nearest_neighbors: Dict[int, List[Tuple[float, int, bool]]]
+        Dictonary with query indices as keys and lists with k_nearest neighbors reference index and similarity as values.
     '''
-    matched_pairs = dict()
+    nearest_neighbors = dict()
     model_embeddings_filename = model + '.h5'
     indices_filename = 'indicies.h5' # there was a typo while saving files - using the same name here
 
@@ -211,7 +252,7 @@ def create_matched_pairs(
         for reference_embeddings_path in reference_embeddings_paths:
             print(f"Processing queries with references from {reference_embeddings_path}...")
             _process_single_reference(
-                matched_pairs=matched_pairs,
+                nearest_neighbors=nearest_neighbors,
                 reference_embeddings_path=reference_embeddings_path,
                 model=model,
                 model_embeddings_filename=model_embeddings_filename,
@@ -219,18 +260,20 @@ def create_matched_pairs(
                 indices_filename=indices_filename,
                 query_embeddings_fileref=query_embeddings_fileref,
                 query_indices_fileref=query_indices_fileref,
+                n_queries=n_queries,
+                k_nearest=k_nearest,
                 batch_size=batch_size
             )
     
     if save_path is not None:
-        print(f"Saving matched_pairs to {save_path}/matched_pairs.pkl...")
-        with open(f"{save_path}/matched_pairs.pkl", 'wb') as f:
-            pickle.dump(matched_pairs, f)
+        print(f"Saving nearest_neighbors to {save_path}/nearest_neighbors.pkl...")
+        with open(f"{save_path}/nearest_neighbors.pkl", 'wb') as f:
+            pickle.dump(nearest_neighbors, f)
 
-    return matched_pairs
+    return nearest_neighbors
 
 def micro_average_precision(
-        matched_pairs: Dict,
+        nearest_neighbors: Dict[int, List[Tuple[float, int, bool]]],
         number_of_positives: int,
         save_path: str | None = None
 ):
@@ -239,8 +282,9 @@ def micro_average_precision(
 
     Parameters
     ----------
-    matched_pairs: Dict
-        Dictonary with query indices as keys and tuples with nearest neighbor reference index and similarity as values.
+    nearest_neighbors: Dict[int, List[Tuple[float, int, bool]]]
+        Dictonary with query indices as keys and lists with k_nearest neighbors reference index and similarity as values.
+        For this calculation only top1 nearest neighbors are needed.
     
     number_of_positives: int
         Number of positive samples.
@@ -256,21 +300,22 @@ def micro_average_precision(
     precision_recall_history: np.ndarray
         A numpy array with precision-recall pairs for different threshold values.
     '''
-    matched_pairs = sorted(matched_pairs.items(), key=lambda item: item[1]["similarity"], reverse=True)
+    nearest_neighbors = sorted(nearest_neighbors.items(), key=lambda item: item[1][0], reverse=True)
     micro_ap = 0.0
     num_relevant_found = 0
     prev_recall = 0.0
-    precision_recall_history = np.empty(shape=(len(matched_pairs), 3))
+    precision_recall_history = np.empty(shape=(len(nearest_neighbors), 3))
 
-    for i, (query_idx, ref_match) in enumerate(matched_pairs):
-        if ref_match["correct_match"]:
+    for i, (query_idx, nn_list) in enumerate(nearest_neighbors):
+        nearest_neighbor = nn_list[0]
+        if nearest_neighbor[2]:
             num_relevant_found += 1
         precision = num_relevant_found / (i + 1)
         recall = num_relevant_found / number_of_positives
         delta_recall = recall - prev_recall
         micro_ap += precision * delta_recall
         prev_recall = recall
-        threshold = ref_match["similarity"]
+        threshold = nearest_neighbor[0]
         precision_recall_history[i] = [precision, recall, threshold]
     
     if save_path is not None:
@@ -314,7 +359,7 @@ def average_precision(
     ap /= len(relevant_items)
     return ap
 
-def compute_metrics(
+"""def compute_metrics(
         query_embeddings: np.array,
         reference_embeddings: np.array,
         ground_truth: Dict[int, int],
@@ -404,4 +449,4 @@ def compute_metrics(
         'microAP': micro_ap
     }
     
-    return result
+    return result"""
