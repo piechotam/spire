@@ -1,11 +1,19 @@
+import sys
+import os
+from pathlib import Path
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import streamlit as st
 import random
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
-from clip.clip import load
-import os
 import glob
+
+APP_ROOT = Path(__file__).parent.resolve()
+sys.path.append(str(APP_ROOT.parent))
+from clip.clip import load
 
 from concept_extraction.concept_extraction import (
     load_concepts,
@@ -20,37 +28,46 @@ from concept_extraction.concept_extraction import (
     find_neighbours_sae,
 )
 
+CONCEPT_NAMES_PATH = (
+    APP_ROOT.parent / "concept_names" / "clip_ViT-B_16_concept_names.csv"
+)
+DATASET_FOLDER = APP_ROOT / "Rapidata_Other_Animals_10_sample"
+SAE_CHECKPOINT = (
+    APP_ROOT.parent / "sae_checkpoints" / "clip_ViT-B_16_sparse_autoencoder_final.pt"
+)
+
 st.set_page_config(layout="wide")
 st.title("CLIP vs SAE Image Similarity Explorer")
+
 
 @st.cache_resource
 def load_models():
     try:
-        concept_names = load_concepts("../concept_names/clip_ViT-B_16_concept_names.csv")
+        concept_names = load_concepts(str(CONCEPT_NAMES_PATH))
         ViT_B_16_clip, image_transform = load("ViT-B/16")
-        sparse_autoencoder = load_sae("../sae_checkpoints/clip_ViT-B_16_sparse_autoencoder_final.pt")
+        sparse_autoencoder = load_sae(str(SAE_CHECKPOINT))
         return concept_names, ViT_B_16_clip, image_transform, sparse_autoencoder
     except Exception as e:
         st.error(f"Error loading models: {str(e)}")
         return None, None, None, None
-    
+
+
 with st.spinner("Loading models..."):
     concept_names, ViT_B_16_clip, image_transform, sparse_autoencoder = load_models()
 
-if 'samples' not in st.session_state:
+if "samples" not in st.session_state:
     st.session_state.samples = None
     st.session_state.sae_activations = None
 
-data_source = st.radio("Select image source:", 
-                      ["Use example dataset", "Upload your own images"], 
-                      index=0)
+data_source = st.radio(
+    "Select image source:", ["Use example dataset", "Upload your own images"], index=0
+)
 
 if data_source == "Use example dataset":
     if st.button("Load Dataset"):
         with st.spinner("Loading dataset..."):
             try:
-                folder_path = "Rapidata_Other_Animals_10_sample"
-                image_paths = glob.glob(os.path.join(folder_path, "*.jpg"))
+                image_paths = list(DATASET_FOLDER.glob("*.jpg"))
 
                 samples = []
                 for img_path in image_paths:
@@ -58,16 +75,19 @@ if data_source == "Use example dataset":
                     samples.append({"image": img})
 
                 st.session_state.samples = samples
-                st.write(f'session state samples: {len(st.session_state.samples)}')
+                st.write(f"session state samples: {len(st.session_state.samples)}")
 
-                                
             except Exception as e:
                 st.error(f"Error loading dataset: {str(e)}")
-                st.warning("Using fallback mode with limited functionality. You can upload your own images instead.")
-                
-                
+                st.warning(
+                    "Using fallback mode with limited functionality. You can upload your own images instead."
+                )
+
+
 elif data_source == "Upload your own images":
-    uploaded_files = st.file_uploader("Upload images", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader(
+        "Upload images", type=["jpg", "png", "jpeg"], accept_multiple_files=True
+    )
     if uploaded_files:
         images = []
         for file in uploaded_files:
@@ -83,15 +103,25 @@ if st.session_state.samples is None or len(st.session_state.samples) == 0:
     st.stop()
 
 max_index = len(st.session_state.samples) - 1
-query_idx = st.number_input("Select image index", min_value=0, max_value=max_index, value=min(69, max_index), step=1)
-n_concepts = st.slider("Number of concepts to display", min_value=1, max_value=20, value=10, step=1)
+query_idx = st.number_input(
+    "Select image index",
+    min_value=0,
+    max_value=max_index,
+    value=min(69, max_index),
+    step=1,
+)
+n_concepts = st.slider(
+    "Number of concepts to display", min_value=1, max_value=20, value=10, step=1
+)
 
 if st.button("Analyze Concepts"):
     with st.spinner("Extracting concepts..."):
         try:
             image = st.session_state.samples[query_idx]["image"]
-            
-            image, image_transformed = prepare_image_from_datasets(image, image_transform)
+
+            image, image_transformed = prepare_image_from_datasets(
+                image, image_transform
+            )
 
             top_n_concept_activations, top_n_concept_names = extract_concepts(
                 n_concepts=n_concepts,
@@ -105,24 +135,28 @@ if st.button("Analyze Concepts"):
             axs[0].imshow(image)
             axs[0].axis("off")
             axs[0].set_title(f"Selected Image (Index {query_idx})")
-            
+
             axs[1].barh(top_n_concept_names, top_n_concept_activations, color="#4e79a7")
             axs[1].set_xlabel("Activation Value")
             axs[1].set_ylabel("Concept")
             axs[1].set_title(f"Top {n_concepts} Concepts")
-            
+
             plt.tight_layout()
             st.pyplot(fig)
 
             st.subheader("Extracted Concepts")
-            concepts_with_scores = list(zip(top_n_concept_names, top_n_concept_activations))
+            concepts_with_scores = list(
+                zip(top_n_concept_names, top_n_concept_activations)
+            )
             concepts_with_scores.sort(key=lambda x: x[1], reverse=True)
 
             sorted_names = [c[0] for c in concepts_with_scores]
             sorted_scores = [c[1] for c in concepts_with_scores]
-            st.table({
-                "Concept": sorted_names,
-                "Activation Score": [f"{x:.4f}" for x in sorted_scores]
-            })
+            st.table(
+                {
+                    "Concept": sorted_names,
+                    "Activation Score": [f"{x:.4f}" for x in sorted_scores],
+                }
+            )
         except Exception as e:
             st.error(f"Error processing image: {str(e)}")
