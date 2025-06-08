@@ -42,5 +42,8 @@ When using **CLIP (Contrastive Language–Image Pretraining)**  feature extracto
 
 **Note:** `microAP` is better when evaluating global ranking performance, while `mAP` treats each query independently.
 
+### Running Streamlit app
+```streamlit run path_to_app```
+
 #### References
 [1] Douze, M., Tolias, G., Pizzi, E., Papakipos, Z., Chanussot, L., Radenovic, F., Jenicek, T., Maximov, M., Leal-Taixé, L., Elezi, I., Chum, O., & Canton Ferrer, C. "The 2021 Image Similarity Dataset and Challenge." arXiv preprint arXiv:2106.09672 (2021). https://arxiv.org/pdf/2106.09672
