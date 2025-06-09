@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import glob
 import torch
+import io
 
 
 APP_ROOT = Path(__file__).parent.resolve()
@@ -103,6 +104,19 @@ def visualize_neighbours_with_distances_streamlit(
 
     st.pyplot(fig)
 
+def load_and_resize(image_path, target_width, target_height):
+    img = Image.open(image_path)
+    img.thumbnail((target_width, target_height))
+    new_img = Image.new("RGB", (target_width, target_height), (255, 255, 255))
+    new_img.paste(
+        img,
+        (
+            (target_width - img.width) // 2,
+            (target_height - img.height) // 2
+        )
+    )
+    return new_img
+
 
 st.set_page_config(layout="wide")
 st.title("CLIP vs SAE Image Similarity Explorer")
@@ -151,15 +165,22 @@ def load_embeddings():
 with st.spinner("Loading models..."):
     concept_names, ViT_B_16_clip, image_transform, sparse_autoencoder = load_models()
 
-tabs = st.tabs(["Concepts", "Similarities"])
+tabs = st.tabs(["Concepts", "Similarities", "ISC 2021 Visualizations"])
 
 with tabs[0]:
     st.header("Concepts Extraction")
+    if "last_data_source_1" not in st.session_state:
+        st.session_state["last_data_source_1"] = None
+
     data_source_1 = st.radio(
         "Select image source:",
         ["Use example dataset (Rapidata_Other_Animals)", "Upload your own images"],
         key="ds1",
     )
+
+    if st.session_state["last_data_source_1"] != data_source_1:
+        st.session_state["samples_tab1"] = None
+        st.session_state["last_data_source_1"] = data_source_1
 
     if data_source_1 == "Use example dataset (Rapidata_Other_Animals)":
         if st.button("Load Dataset", key="load1"):
@@ -328,3 +349,43 @@ with tabs[1]:
         )
     else:
         st.info("Loading data or no images available yet.")
+
+
+with tabs[2]:
+    st.header("ISC 2021 Visualizations")
+
+    IMAGE_WIDTH = 500
+    IMAGE_HEIGHT = 400
+
+    st.subheader("Precision-Recall Curve")
+    col1, col2 = st.columns(2)
+    with col1:
+        sae_pr_path = APP_ROOT / "isc2021_visualizations" / "sae" / "precision_recall_curve.png"
+        img_sae_pr = load_and_resize(sae_pr_path, IMAGE_WIDTH, IMAGE_HEIGHT)
+        st.image(img_sae_pr, caption="SAE")
+    with col2:
+        clip_pr_path = APP_ROOT / "isc2021_visualizations" / "clip" / "precision_recall_curve.png"
+        img_clip_pr = load_and_resize(clip_pr_path, IMAGE_WIDTH, IMAGE_HEIGHT)
+        st.image(img_clip_pr, caption="CLIP")
+
+    st.subheader("Similarity Boxplot")
+    col3, col4 = st.columns(2)
+    with col3:
+        sae_boxplot_path = APP_ROOT / "isc2021_visualizations" / "sae" / "similarity_boxplot.png"
+        img_sae_box = load_and_resize(sae_boxplot_path, IMAGE_WIDTH, IMAGE_HEIGHT)
+        st.image(img_sae_box, caption="SAE")
+    with col4:
+        clip_boxplot_path = APP_ROOT / "isc2021_visualizations" / "clip" / "similarity_boxplot.png"
+        img_clip_box = load_and_resize(clip_boxplot_path, IMAGE_WIDTH, IMAGE_HEIGHT)
+        st.image(img_clip_box, caption="CLIP")
+
+    st.subheader("Similarity Histogram (Matched Pairs)")
+    col5, col6 = st.columns(2)
+    with col5:
+        sae_hist_path = APP_ROOT / "isc2021_visualizations" / "sae" / "similarity_histogram.png"
+        img_sae_hist = load_and_resize(sae_hist_path, IMAGE_WIDTH, IMAGE_HEIGHT)
+        st.image(img_sae_hist, caption="SAE")
+    with col6:
+        clip_hist_path = APP_ROOT / "isc2021_visualizations" / "clip" / "similarity_histogram.png"
+        img_clip_hist = load_and_resize(clip_hist_path, IMAGE_WIDTH, IMAGE_HEIGHT)
+        st.image(img_clip_hist, caption="CLIP")
