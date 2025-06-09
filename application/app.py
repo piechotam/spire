@@ -39,6 +39,7 @@ SAE_CHECKPOINT = (
 )
 STL10_FOLDER = APP_ROOT / "stl10_sample_500"
 
+
 def visualize_neighbours_with_distances_streamlit(
     samples,
     query_idx,
@@ -69,7 +70,9 @@ def visualize_neighbours_with_distances_streamlit(
     axs[0, 0].axis("off")
     axs[0, 0].set_title("Query Image")
 
-    for i, (neighbour_idx, similarity) in enumerate(zip(nearest_indices, nearest_similarities)):
+    for i, (neighbour_idx, similarity) in enumerate(
+        zip(nearest_indices, nearest_similarities)
+    ):
         axs[0, i + 1].imshow(samples[neighbour_idx]["image"])
         axs[0, i + 1].axis("off")
         axs[0, i + 1].set_title(f"Nearest {i+1}\nSimilarity: {similarity:.4f}")
@@ -83,7 +86,9 @@ def visualize_neighbours_with_distances_streamlit(
         axs[1, 0].axis("off")
         axs[1, 0].set_title("Query Image")
 
-        for i, (far_idx, similarity) in enumerate(zip(farthest_indices, farthest_similarities)):
+        for i, (far_idx, similarity) in enumerate(
+            zip(farthest_indices, farthest_similarities)
+        ):
             axs[1, i + 1].imshow(samples[far_idx]["image"])
             axs[1, i + 1].axis("off")
             axs[1, i + 1].set_title(f"Farthest {i+1}\nSimilarity: {similarity:.4f}")
@@ -113,7 +118,8 @@ def load_models():
     except Exception as e:
         st.error(f"Error loading models: {str(e)}")
         return None, None, None, None
-    
+
+
 @st.cache_resource
 def load_embeddings():
     embeddings_clip = None
@@ -142,7 +148,6 @@ def load_embeddings():
     return samples_stl10, embeddings_clip, embeddings_sae
 
 
-
 with st.spinner("Loading models..."):
     concept_names, ViT_B_16_clip, image_transform, sparse_autoencoder = load_models()
 
@@ -150,9 +155,12 @@ tabs = st.tabs(["Concepts", "Similarities"])
 
 with tabs[0]:
     st.header("Concepts Extraction")
-    data_source_1 = st.radio("Select image source:", 
-                            ["Use example dataset (Rapidata_Other_Animals)", "Upload your own images"], key="ds1")
-    
+    data_source_1 = st.radio(
+        "Select image source:",
+        ["Use example dataset (Rapidata_Other_Animals)", "Upload your own images"],
+        key="ds1",
+    )
+
     if data_source_1 == "Use example dataset (Rapidata_Other_Animals)":
         if st.button("Load Dataset", key="load1"):
             with st.spinner("Loading dataset..."):
@@ -168,8 +176,12 @@ with tabs[0]:
                     st.error(f"Error loading dataset: {str(e)}")
 
     elif data_source_1 == "Upload your own images":
-        uploaded_files_1 = st.file_uploader("Upload images", type=["jpg", "png", "jpeg"], 
-                                          accept_multiple_files=True, key="upload1")
+        uploaded_files_1 = st.file_uploader(
+            "Upload images",
+            type=["jpg", "png", "jpeg"],
+            accept_multiple_files=True,
+            key="upload1",
+        )
         if uploaded_files_1:
             samples = []
             for file in uploaded_files_1:
@@ -180,17 +192,32 @@ with tabs[0]:
 
     samples_1 = st.session_state.get("samples_tab1", None)
     if samples_1 is not None and len(samples_1) > 0:
-        max_index_1 = len(samples_1) - 1
-        query_idx_1 = st.number_input(f"Select image index (range 0-{max_index_1})", min_value=0, 
-                                     max_value=max_index_1, value=0, key="idx1")
-        n_concepts_1 = st.slider("Number of concepts to display", min_value=1, 
-                                max_value=20, value=10, key="nconcepts1")
-        
+        st.subheader("Select an Image")
+
+        options = [f"Image {i}" for i in range(len(samples_1))]
+        selected_idx = st.selectbox("Choose an image:", options, index=0)
+
+        selected_idx_num = options.index(selected_idx)
+        st.image(
+            samples_1[selected_idx_num]["image"],
+            caption=f"Selected Image {selected_idx_num}",
+        )
+
+        n_concepts_1 = st.slider(
+            "Number of concepts to display",
+            min_value=1,
+            max_value=20,
+            value=10,
+            key="nconcepts1",
+        )
+
         if st.button("Analyze Concepts", key="analyze1"):
             with st.spinner("Extracting concepts..."):
                 try:
-                    image = samples_1[query_idx_1]["image"]
-                    image, image_transformed = prepare_image_from_datasets(image, image_transform)
+                    image = samples_1[selected_idx_num]["image"]
+                    image, image_transformed = prepare_image_from_datasets(
+                        image, image_transform
+                    )
 
                     top_n_concept_activations, top_n_concept_names = extract_concepts(
                         n_concepts=n_concepts_1,
@@ -203,9 +230,11 @@ with tabs[0]:
                     fig, axs = plt.subplots(1, 2, figsize=(12, 5))
                     axs[0].imshow(image)
                     axs[0].axis("off")
-                    axs[0].set_title(f"Selected Image (Index {query_idx_1})")
+                    axs[0].set_title(f"Selected Image (Index {selected_idx_num})")
 
-                    axs[1].barh(top_n_concept_names, top_n_concept_activations, color="#4e79a7")
+                    axs[1].barh(
+                        top_n_concept_names, top_n_concept_activations, color="#4e79a7"
+                    )
                     axs[1].set_xlabel("Activation Value")
                     axs[1].set_ylabel("Concept")
                     axs[1].set_title(f"Top {n_concepts_1} Concepts")
@@ -214,20 +243,23 @@ with tabs[0]:
                     st.pyplot(fig)
 
                     st.subheader("Extracted Concepts")
-                    concepts_with_scores = list(zip(top_n_concept_names, top_n_concept_activations))
+                    concepts_with_scores = list(
+                        zip(top_n_concept_names, top_n_concept_activations)
+                    )
                     concepts_with_scores.sort(key=lambda x: x[1], reverse=True)
 
                     sorted_names = [c[0] for c in concepts_with_scores]
                     sorted_scores = [c[1] for c in concepts_with_scores]
-                    st.table({
-                        "Concept": sorted_names,
-                        "Activation Score": [f"{x:.4f}" for x in sorted_scores]
-                    })
+                    st.table(
+                        {
+                            "Concept": sorted_names,
+                            "Activation Score": [f"{x:.4f}" for x in sorted_scores],
+                        }
+                    )
                 except Exception as e:
                     st.error(f"Error processing image: {str(e)}")
     else:
         st.info("Please load or upload images to continue.")
-
 with tabs[1]:
     st.header("Image Similarity Explorer")
     st.caption("Using 200 samples from the STL10 dataset")
@@ -247,39 +279,52 @@ with tabs[1]:
     embedding_type = st.radio("Select model:", ["CLIP", "SAE"], key="embed_type")
     embeddings = embeddings_clip if embedding_type == "CLIP" else embeddings_sae
 
-    max_index_2 = max(len(samples_2) - 1, 0)
-    query_idx_2 = st.number_input(f"Select image index (range 0-{max_index_2})", min_value=0, max_value=max_index_2, value=0, key="idx2")
-    top_k = st.slider("Number of nearest/farthest images", min_value=1, max_value=10, value=5)
-    
-
     if embeddings is not None and len(samples_2) > 0:
+        image_options = [f"Image {i}" for i in range(len(samples_2))]
+        selected_option = st.selectbox("Choose an image:", image_options)
+        query_idx_2 = image_options.index(selected_option)
+
+        st.image(
+            samples_2[query_idx_2]["image"],
+            caption=f"Selected Image (Index {query_idx_2})",
+            use_container_width=False,
+        )
+
+        top_k = st.slider(
+            "Number of nearest/farthest images", min_value=1, max_value=10, value=5
+        )
+
         query_embedding = embeddings[query_idx_2].unsqueeze(0)
 
         if embedding_type == "SAE":
-            nearest_idx, nearest_similarities, farthest_idx, farthest_similarities = find_neighbours_sae(
-                query_embedding.detach().numpy(),
-                embeddings.detach().numpy(),
-                query_idx_2,
-                top_n=top_k
+            nearest_idx, nearest_similarities, farthest_idx, farthest_similarities = (
+                find_neighbours_sae(
+                    query_embedding.detach().numpy(),
+                    embeddings.detach().numpy(),
+                    query_idx_2,
+                    top_n=top_k,
+                )
             )
-            title="Image Similarity Comparison (SAE)"
+            title = "Image Similarity Comparison (SAE)"
         else:
-            nearest_idx, nearest_similarities, farthest_idx, farthest_similarities = find_neighbours(
-                query_embedding.detach().numpy(),
-                embeddings.detach().numpy(),
-                query_idx_2,
-                top_n=top_k
+            nearest_idx, nearest_similarities, farthest_idx, farthest_similarities = (
+                find_neighbours(
+                    query_embedding.detach().numpy(),
+                    embeddings.detach().numpy(),
+                    query_idx_2,
+                    top_n=top_k,
+                )
             )
-            title="Image Similarity Comparison (CLIP)"
+            title = "Image Similarity Comparison (CLIP)"
 
         visualize_neighbours_with_distances_streamlit(
-            samples_2, 
+            samples_2,
             query_idx=query_idx_2,
-            nearest_indices=nearest_idx, 
+            nearest_indices=nearest_idx,
             nearest_similarities=nearest_similarities,
-            farthest_indices=farthest_idx, 
+            farthest_indices=farthest_idx,
             farthest_similarities=farthest_similarities,
-            title=title
+            title=title,
         )
     else:
         st.info("Loading data or no images available yet.")
