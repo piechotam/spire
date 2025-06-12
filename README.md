@@ -42,6 +42,22 @@ When using **CLIP (Contrastive Language–Image Pretraining)**  feature extracto
 
 **Note:** `microAP` is better when evaluating global ranking performance, while `mAP` treats each query independently.
 
+### Results summary
+
+Note that microAP (incl. Precision and Recall) metrics was computed on whole dataset (50k query and 1M reference images), while other calcuations (RAM usage and calculation time) were run on first 500 query images due to computation limitations. The proportions are preserved, as 104 of selected images had GT reference (20% of dataset).
+
+|            |   CLIP    |   SAE    |
+|:----------:|:---------:|:--------:|
+| **Precision**      | 0.1047   | **0.3004** |
+| **Recall**         | 0.075    | 0.075     |
+| **microAP**        | 0.0399   | **0.0647** |
+| **RAM usage**      | **1.6 GB** | 3.3 GB   |
+| **calculation time** | **37 s**   | 1087 s   |
+
+We have chosen a similarity threshold of 0.7507 for CLIP and -69.96 for SAE. One can choose different threshold and therefore adjust the tradeoff between Precision and Recall.  
+
+
+
 ### Running Streamlit app
 ```streamlit run path_to_app```
 
